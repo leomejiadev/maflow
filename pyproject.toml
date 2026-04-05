@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "maflow"
+version = "0.1.0"
+description = "Token-efficient multi-agent workflow auditor"
+requires-python = ">=3.11"
+dependencies = [
+    "rich>=13.0",
+    "typer>=0.12",
+]
+
+[project.scripts]
+maflow = "auditor.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["auditor*"]

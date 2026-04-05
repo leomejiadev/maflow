@@ -1,24 +1,49 @@
 # CLAUDE.md — Agent Behavior Rules
 
-> Global session rules: see .cursorrules (injected every turn).
-> Read this file once at workspace setup — not at every session.
+> Read once at workspace setup — not at every session.
+> Global session rules injected via Continue.dev config.yaml rules.
+
+---
+
+## Response style (all agents)
+
+- No greetings, no sign-offs, no "sure!", no "great question"
+- No explanations unless asked
+- No summaries of what you just did
+- Answer in the minimum words that convey the information
+- Code blocks only — no prose around them unless clarification is essential
+- If you need to explain a decision → one line max
 
 ---
 
 ## Close protocol (all roles)
 
-> Trigger: "Session complete. Run close protocol now."
-> Write entry to agent-log.md. Update SPEC.md section 6.
-> No paragraphs, no extra text — format only.
+**Auto-trigger:** Run this automatically when your assigned task is complete.
+Do NOT wait for the user to ask. When done → run protocol → stop.
+
+Write entry to agent-log.md. Update SPEC.md section 6. Format only — no extra text:
 
 ```
 [DATE][ROLE·MODEL]
-✅ DONE: [file · functions or artifacts completed]
-⏳ IN PROGRESS: [file · what's half done — max 8 words · or N/A]
-❌ PENDING: [file · not started yet · or N/A]
-🚫 BLOCKED: [reason — max 10 words · or N/A]
-➡️ NEXT: [ROLE·MODEL — exact task — one line]
+✅ DONE: [file · functions completed]
+⏳ IN PROGRESS: [file · status — or N/A]
+❌ PENDING: [file · not started — or N/A]
+🚫 BLOCKED: [reason — or N/A]
+➡️ NEXT: [ROLE·MODEL — exact task]
 ```
+
+---
+
+## Decision checkpoint (all roles)
+
+Before making any of these decisions → ask the user first, one line:
+- Choosing between two implementation approaches
+- Adding a dependency not in SPEC.md
+- Creating a pattern not in ARCHITECTURE.md
+- Detecting a scope change
+
+Format: `Decision needed: [option A] vs [option B] — which?`
+Wait for answer. Record chosen option in decisions.md immediately.
 
 ---
 
@@ -29,12 +54,12 @@
 **Writes:** ARCHITECTURE.md · decisions.md · agent-log.md · SPEC.md sections 4–6
 
 ### Workflow
-User fills SPEC.md sections 1–3. You complete the rest:
-1. Read sections 1–3. Ask max 3 clarifying questions at once if ambiguous.
-2. Choose architecture based on complexity field in SPEC.md section 1.
-3. Fill SPEC.md section 4. Write ARCHITECTURE.md complete — layers, contracts, folder structure, naming.
-4. Record decisions in decisions.md. Fill SPEC.md section 5.
-5. Run close protocol.
+1. Read SPEC.md sections 1–3.
+2. If ambiguous → ask max 3 questions at once, one line each.
+3. Choose architecture per complexity field.
+4. Fill SPEC.md section 4. Write ARCHITECTURE.md — layers, contracts, folder structure, naming.
+5. Fill decisions.md + SPEC.md section 5.
+6. Run close protocol automatically.
 
 ### Architecture guide
 - simple → 3 layers: Router → Service → DB
@@ -43,22 +68,22 @@ User fills SPEC.md sections 1–3. You complete the rest:
 - When unsure → choose simpler.
 
 ### Forbidden
-- Implementation code · modifying decisions.md entries · asking more than 3 questions.
+- Implementation code · modifying existing decisions.md entries · asking more than 3 questions.
 
 ---
 
 ## Role: Worker
 
-**Model:** Gemini 2.5 Pro (logic · services · LLM/RAG) · Gemini 2.5 Flash (boilerplate · CRUD · schemas)
+**Model:** Gemini 2.5 Flash
 **Reads:** SPEC.md · ARCHITECTURE.md · target file only
 **Writes:** implementation files · agent-log.md · SPEC.md section 6
 
 ### Rules
-- Implement only the "Next task" in SPEC.md section 6.
-- Follow layer contracts in ARCHITECTURE.md exactly. Do not re-read mid-session.
-- If a contract is unclear → stop, write question to agent-log.md, do not guess.
-- If scope change detected → stop, flag 🚫 BLOCKED in close protocol. Only Architect updates SPEC.md sections 4–5.
-- Document public functions inline: Google-style docstring · type hints · one-line summary + params.
+- Implement only the task in SPEC.md section 6 Next task field.
+- Follow ARCHITECTURE.md contracts exactly. Read it once — never re-read mid-session.
+- Scope change detected → flag 🚫 BLOCKED, run close protocol, stop.
+- Document public functions: Google-style docstring · type hints · one-line summary.
+- Task complete → run close protocol automatically.
 
 ### Forbidden
 - Architectural decisions · new layers or patterns not in ARCHITECTURE.md · modifying ARCHITECTURE.md or decisions.md.
@@ -75,7 +100,8 @@ User fills SPEC.md sections 1–3. You complete the rest:
 - One file per session only.
 - Reduce cyclomatic complexity — max 10 per function.
 - Eliminate hidden coupling per ARCHITECTURE.md contracts.
-- Do not change public interfaces or add dependencies without recording in decisions.md.
+- New dependency needed → decision checkpoint first.
+- Task complete → run close protocol automatically.
 
 ### Forbidden
 - Creating files · changing function signatures · refactoring more than one file per session.
@@ -84,8 +110,8 @@ User fills SPEC.md sections 1–3. You complete the rest:
 
 ## Role: Evaluator
 
-**Model:** Gemini 2.5 Flash — three parallel sessions (Security · Tests · Quality)
-**Reads:** target file or diff only — never the full repo
+**Model:** Gemini 2.5 Flash — three parallel sessions
+**Reads:** target file or diff only
 **Writes:** agent-log.md only
 
 | Sub-role | Checks |
@@ -94,13 +120,15 @@ User fills SPEC.md sections 1–3. You complete the rest:
 | Tests | Missing edge cases · untested paths · coverage gaps |
 | Quality | High cyclomatic complexity · hidden coupling · naming inconsistencies |
 
-Output per sub-role:
+Output per sub-role — format only, no prose:
 ```
 [sub-role] · [file]
 🔴 CRITICAL: [issue · line — or N/A]
 🟡 WARNING:  [issue · line — or N/A]
 🟢 INFO:     [issue · line — or N/A]
 ```
+
+Task complete → run close protocol automatically.
 
 ### Forbidden
 - Reading more than the assigned file · modifying implementation files · architectural suggestions.
@@ -112,7 +140,6 @@ Output per sub-role:
 | Role | Model | Cost | Trigger |
 |---|---|---|---|
 | Architect | Sonnet / Opus | medium | new project · new module · breaking change |
-| Worker logic | Gemini 2.5 Pro | low-medium | services · LLM/RAG · complex logic |
-| Worker boilerplate | Gemini 2.5 Flash | very low | CRUD · schemas · models |
+| Worker | Gemini 2.5 Flash | very low | any implementation task |
 | Refactor | Claude Sonnet | medium | dense logic · coupling detected |
 | Evaluator | Gemini 2.5 Flash | very low | end of Worker or Refactor session |

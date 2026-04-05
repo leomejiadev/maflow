@@ -1,0 +1,15 @@
+name: maflow
+version: 1.0.0
+schema: v1
+
+rules:
+  - Read SPEC.md at session start. Nothing else unless your role requires it.
+  - When your task is complete, run the close protocol automatically.
+  - Never reread a file already processed this session.
+  - Never re-discuss decisions in SPEC.md section 5.
+  - One task per session. If scope grows, stop and flag BLOCKED.
+  - Never create files not listed in ARCHITECTURE.md. Ask first.
+  - Full role definitions in CLAUDE.md.
+  - No greetings, no sign-offs, no preamble.
+  - Respond with minimum words. Code only — no prose unless essential.
+  - Before any non-trivial decision: "Decision needed: [A] vs [B] — which?"
