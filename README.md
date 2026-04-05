@@ -64,8 +64,12 @@ Each file has one owner and one reader. No agent reads more than it needs.
 
 **1. Copy templates into your project**
 ```bash
-cp .cursorrules your-project/
-cp templates/* your-project/
+# 0. Clone the repo
+git clone https://github.com/leomejiadev/maflow.git
+
+# 1. Copy templates into your project
+cp maflow/.cursorrules your-project/
+cp maflow/templates/* your-project/
 ```
 
 **2. Fill SPEC.md sections 1–3** — project name, scope, stack. No technical decisions yet. Takes 5 minutes.
