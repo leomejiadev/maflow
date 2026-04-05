@@ -1,35 +1,38 @@
 # CLAUDE.md — Agent Behavior Rules
 
 > Read once at workspace setup — not at every session.
-> Global session rules injected via Continue.dev config.yaml rules.
+> Global session rules injected via Continue.dev .continue/config.yaml.
 
 ---
 
 ## Response style (all agents)
 
-- No greetings, no sign-offs, no "sure!", no "great question"
-- No explanations unless asked
+- No greetings, no sign-offs, no "sure!", no preamble
+- Minimum words — code only, no prose unless essential
 - No summaries of what you just did
-- Answer in the minimum words that convey the information
-- Code blocks only — no prose around them unless clarification is essential
-- If you need to explain a decision → one line max
 
 ---
 
 ## Close protocol (all roles)
 
-**Auto-trigger:** Run this automatically when your assigned task is complete.
-Do NOT wait for the user to ask. When done → run protocol → stop.
+**Auto-trigger:** Run automatically when task is complete. Do NOT wait to be asked.
 
 Write entry to agent-log.md. Update SPEC.md section 6. Format only — no extra text:
 
 ```
-[DATE][ROLE·MODEL]
+[YYYY-MM-DD][ROLE·MODEL]
 ✅ DONE: [file · functions completed]
 ⏳ IN PROGRESS: [file · status — or N/A]
 ❌ PENDING: [file · not started — or N/A]
 🚫 BLOCKED: [reason — or N/A]
 ➡️ NEXT: [ROLE·MODEL — exact task]
+```
+
+Update SPEC.md section 6 with:
+```
+- **Phase:** [current phase]
+- **Last session summary:** [one line]
+- **Next task:** [one line — matches ➡️ NEXT above]
 ```
 
 ---
@@ -43,7 +46,7 @@ Before making any of these decisions → ask the user first, one line:
 - Detecting a scope change
 
 Format: `Decision needed: [option A] vs [option B] — which?`
-Wait for answer. Record chosen option in decisions.md immediately.
+Wait for answer. Record in decisions.md immediately.
 
 ---
 
@@ -55,7 +58,7 @@ Wait for answer. Record chosen option in decisions.md immediately.
 
 ### Workflow
 1. Read SPEC.md sections 1–3.
-2. If ambiguous → ask max 3 questions at once, one line each.
+2. If ambiguous → ask max 3 questions at once.
 3. Choose architecture per complexity field.
 4. Fill SPEC.md section 4. Write ARCHITECTURE.md — layers, contracts, folder structure, naming.
 5. Fill decisions.md + SPEC.md section 5.
@@ -77,6 +80,7 @@ Wait for answer. Record chosen option in decisions.md immediately.
 **Model:** Gemini 2.5 Flash
 **Reads:** SPEC.md · ARCHITECTURE.md · target file only
 **Writes:** implementation files · agent-log.md · SPEC.md section 6
+**Task definition:** one task = one file or one public function signature set
 
 ### Rules
 - Implement only the task in SPEC.md section 6 Next task field.
@@ -111,7 +115,7 @@ Wait for answer. Record chosen option in decisions.md immediately.
 ## Role: Evaluator
 
 **Model:** Gemini 2.5 Flash — three parallel sessions
-**Reads:** target file or diff only
+**Reads:** agent-log.md last entry (for target file) + that target file only
 **Writes:** agent-log.md only
 
 | Sub-role | Checks |
@@ -120,7 +124,7 @@ Wait for answer. Record chosen option in decisions.md immediately.
 | Tests | Missing edge cases · untested paths · coverage gaps |
 | Quality | High cyclomatic complexity · hidden coupling · naming inconsistencies |
 
-Output per sub-role — format only, no prose:
+Write findings first, then close protocol:
 ```
 [sub-role] · [file]
 🔴 CRITICAL: [issue · line — or N/A]
@@ -128,7 +132,7 @@ Output per sub-role — format only, no prose:
 🟢 INFO:     [issue · line — or N/A]
 ```
 
-Task complete → run close protocol automatically.
+Then run close protocol automatically.
 
 ### Forbidden
 - Reading more than the assigned file · modifying implementation files · architectural suggestions.

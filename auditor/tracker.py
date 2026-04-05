@@ -17,20 +17,21 @@ BASELINE_TURNS = {
 }
 
 
+def _is_auditor(entry: Entry) -> bool:
+    return entry.role.lower() == "auditor"
+
+
 def _session_id(entry: Entry) -> str:
-    """Generate stable ID from entry content."""
     raw = f"{entry.date}{entry.role}{entry.model}{entry.done}"
     return hashlib.md5(raw.encode()).hexdigest()[:12]
 
 
 def _calc_turn_count(entries: list[Entry], current: Entry) -> int:
-    """
-    Count consecutive entries of the same role+model before a role change.
-    Simulates turns within a logical session.
-    """
     role = current.role.lower()
     count = 0
     for e in reversed(entries):
+        if _is_auditor(e):
+            continue
         if e.role.lower() == role and e.model.lower() == current.model.lower():
             count += 1
         else:
@@ -39,10 +40,6 @@ def _calc_turn_count(entries: list[Entry], current: Entry) -> int:
 
 
 def _calc_drift(role: str, turn_count: int) -> float:
-    """
-    Calculate drift ratio: actual turns / expected baseline.
-    Higher = more token drift.
-    """
     baseline = BASELINE_TURNS.get(role.lower(), 2)
     return round(turn_count / baseline, 2)
 
@@ -55,21 +52,13 @@ def _alert_level(drift: float) -> str:
 
 
 def process_entries(entries: list[Entry]) -> list[Session]:
-    """
-    Convert Entry list into Session list with metrics.
-    Saves new sessions to SQLite automatically.
-
-    Args:
-        entries: Parsed entries from agent-log.md
-
-    Returns:
-        List of Session objects with drift and alert data.
-    """
+    """Convert Entry list into Session list. Skips Auditor entries."""
     init_db()
     sessions = []
+    non_auditor = [e for e in entries if not _is_auditor(e)]
 
-    for i, entry in enumerate(entries):
-        prior = entries[:i]
+    for i, entry in enumerate(non_auditor):
+        prior = non_auditor[:i]
         turn_count = _calc_turn_count(prior + [entry], entry)
         drift = _calc_drift(entry.role, turn_count)
         alert = _alert_level(drift)
@@ -88,12 +77,7 @@ def process_entries(entries: list[Entry]) -> list[Session]:
 
 
 def get_summary(sessions: list[Session]) -> dict:
-    """
-    Generate summary metrics across all sessions.
-
-    Returns:
-        Dict with total, by_provider counts and worst session.
-    """
+    """Summary metrics — excludes Auditor entries from counts."""
     claude = [s for s in sessions if s.entry.provider == "claude"]
     gemini = [s for s in sessions if s.entry.provider == "gemini"]
     red = [s for s in sessions if s.alert_level == "red"]

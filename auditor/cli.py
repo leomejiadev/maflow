@@ -18,7 +18,6 @@ DEFAULT_LOG = Path("agent-log.md")
 
 
 def _load(log_path: Path):
-    """Parse log and process entries into sessions."""
     if not log_path.exists():
         console.print(f"[red]agent-log.md not found at: {log_path}[/red]")
         raise typer.Exit(1)
@@ -32,14 +31,14 @@ def _load(log_path: Path):
 @app.command()
 def report(
     log: Path = typer.Option(DEFAULT_LOG, "--log", "-l", help="Path to agent-log.md"),
-    no_write: bool = typer.Option(
-        False, "--no-write", help="Skip writing audit entry to log"
+    write: bool = typer.Option(
+        False, "--write", help="Write audit entry to log after report"
     ),
 ):
-    """Full audit report. Writes audit entry to agent-log.md automatically."""
+    """Full audit report with drift ratio per session."""
     sessions = _load(log)
     print_report(sessions)
-    if not no_write:
+    if write:
         write_audit_entry(log, sessions)
         console.print(f"[dim]Audit entry written to {log}[/dim]")
 

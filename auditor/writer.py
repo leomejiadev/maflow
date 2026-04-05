@@ -6,7 +6,6 @@ from .tracker import get_summary
 
 
 def _build_entry(sessions: list[Session]) -> str:
-    """Build close protocol entry for auditor run."""
     summary = get_summary(sessions)
     total = summary["total_sessions"]
     red = summary["red_alerts"]
@@ -29,17 +28,10 @@ def _build_entry(sessions: list[Session]) -> str:
 
 
 def write_audit_entry(log_path: str | Path, sessions: list[Session]) -> None:
-    """
-    Append auditor entry to agent-log.md after a report run.
-
-    Args:
-        log_path: Path to agent-log.md
-        sessions: Sessions from latest audit run
-    """
+    """Append auditor entry to agent-log.md."""
     path = Path(log_path)
     if not path.exists():
         return
-
     entry = _build_entry(sessions)
     with open(path, "a", encoding="utf-8") as f:
         f.write(entry)
