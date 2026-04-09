@@ -34,6 +34,7 @@ Run close protocol when done.""",
     "worker": """You are the Worker agent.
 Read SPEC.md and ARCHITECTURE.md. Follow CLAUDE.md Role: Worker.
 Implement the task in SPEC.md section 6 Next task field.
+If you use a new external package: add it to pyproject.toml with exact version before importing it.
 Run close protocol when done.""",
     "evaluator-security": """You are the Security Evaluator.
 Follow CLAUDE.md Role: Evaluator — Security sub-role.
@@ -50,6 +51,7 @@ Write findings to agent-log.md. Run close protocol when done.""",
     "refactor": """You are the Refactor agent.
 Read SPEC.md and the file flagged by evaluators in agent-log.md.
 Follow CLAUDE.md Role: Refactor. One file only.
+If you use a new external package: add it to pyproject.toml with exact version before importing it.
 Run close protocol when done.""",
     "testing": """You are the Worker agent writing tests.
 Read SPEC.md and the last refactored file in agent-log.md.
@@ -73,8 +75,125 @@ def _find_cn() -> str:
     return "cn"
 
 
+def _check_docker(project: Path) -> bool:
+    """Check Docker is running and PostgreSQL container is up. Ask permission if not."""
+    result = subprocess.run(["docker", "info"], capture_output=True, text=True)
+    docker_down = (
+        result.returncode != 0
+        or "failed to connect" in result.stderr.lower()
+        or "cannot connect" in result.stderr.lower()
+        or "error" in result.stderr.lower()
+    )
+
+    if docker_down:
+        console.print("[yellow]⚠  Docker is not running.[/yellow]")
+        start = typer.confirm("   Start Docker Desktop now?", default=False)
+        if not start:
+            console.print("[dim]   Skipping Docker — continue manually.[/dim]")
+            return True
+        console.print("[dim]   Start Docker Desktop manually then press Enter...[/dim]")
+        input()
+        result = subprocess.run(["docker", "info"], capture_output=True, text=True)
+        still_down = (
+            result.returncode != 0
+            or "failed to connect" in result.stderr.lower()
+            or "error" in result.stderr.lower()
+        )
+        if still_down:
+            console.print(
+                "[red]   Docker still not running — continuing without it.[/red]"
+            )
+            return True
+
+    # Check docker-compose.yml
+    compose_file = project / "docker-compose.yml"
+    if not compose_file.exists():
+        console.print("[yellow]⚠  No docker-compose.yml found.[/yellow]")
+        create = typer.confirm(
+            "   Create a default PostgreSQL docker-compose.yml?", default=True
+        )
+        if create:
+            compose_file.write_text(
+                "services:\n"
+                "  db:\n"
+                "    image: postgres:16\n"
+                "    environment:\n"
+                "      POSTGRES_USER: postgres\n"
+                "      POSTGRES_PASSWORD: postgres\n"
+                "      POSTGRES_DB: app_db\n"
+                "    ports:\n"
+                '      - "5432:5432"\n',
+                encoding="utf-8",
+            )
+            console.print("[green]   ✓ docker-compose.yml created[/green]")
+        else:
+            return True
+
+    # Check if container is running
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--status", "running"],
+        capture_output=True,
+        text=True,
+        cwd=str(project),
+    )
+    container_up = "postgres" in result.stdout.lower() or "db" in result.stdout.lower()
+    if not container_up:
+        console.print("[yellow]⚠  PostgreSQL container is not running.[/yellow]")
+        start = typer.confirm("   Run docker compose up -d?", default=True)
+        if start:
+            result = subprocess.run(
+                ["docker", "compose", "up", "-d"], cwd=str(project), text=True
+            )
+            if result.returncode == 0:
+                console.print("[green]   ✓ PostgreSQL container started[/green]")
+            else:
+                console.print(
+                    "[red]   Failed to start — check docker-compose.yml[/red]"
+                )
+        else:
+            console.print(
+                "[dim]   Skipping — ensure DB is running before migrations.[/dim]"
+            )
+
+    return True
+
+
+def _print_error(line: str) -> None:
+    """Parse cn error JSON and show a clean human-readable message."""
+    import json
+    import re
+
+    try:
+        # cn wraps errors in nested JSON strings — extract the innermost message
+        outer = json.loads(line)
+        raw = outer.get("message", "")
+        # Unescape nested JSON
+        raw = raw.replace('"', '"').replace("\n", " ")
+        # Extract rate limit info
+        if "429" in raw or "quota" in raw.lower() or "rate" in raw.lower():
+            retry = re.search(r"retry[^\d]*(\d+)", raw, re.IGNORECASE)
+            retry_str = f" — retry in {retry.group(1)}s" if retry else ""
+            console.print(f"[yellow]⚠  Gemini rate limit reached{retry_str}[/yellow]")
+            console.print(
+                "[dim]   Free tier: 20 requests/day. Resets at midnight Pacific time.[/dim]"
+            )
+        elif "401" in raw or "auth" in raw.lower() or "api key" in raw.lower():
+            console.print(
+                "[red]✗  API key error — check your Gemini key in ~/.continue/config.yaml[/red]"
+            )
+        elif "timeout" in raw.lower():
+            console.print("[red]✗  Request timed out — try again[/red]")
+        else:
+            # Show first 120 chars of cleaned message
+            clean = re.sub(r'[{}"\\/]', "", raw)[:120]
+            console.print(f"[red]✗  Error: {clean}[/red]")
+    except Exception:
+        # Fallback — show truncated raw
+        console.print(f"[red]✗  {line[:120]}[/red]")
+
+
 def _run_agent(role: str, model: str, log: Path) -> None:
-    """Launch cn with streaming output so you can watch the agent work in real time."""
+    """Launch cn with live spinner so you can watch the agent work."""
     cn = _find_cn()
     prompt = PROMPTS[role]
 
@@ -85,6 +204,7 @@ def _run_agent(role: str, model: str, log: Path) -> None:
 
     try:
         import threading
+        import time
 
         from rich.live import Live
         from rich.text import Text as RichText
@@ -100,30 +220,37 @@ def _run_agent(role: str, model: str, log: Path) -> None:
             errors="replace",
         )
 
-        def _read_output():
+        def _read():
             for line in proc.stdout:
                 output_lines.append(line.rstrip())
 
-        reader = threading.Thread(target=_read_output, daemon=True)
+        reader = threading.Thread(target=_read, daemon=True)
         reader.start()
 
         with Live(console=console, refresh_per_second=4) as live:
             while proc.poll() is None:
-                status = output_lines[-1][:60] if output_lines else "thinking..."
+                last = output_lines[-1] if output_lines else ""
+                status = (
+                    last[:70]
+                    if last and not last.startswith("{")
+                    else (
+                        output_lines[-2][:70]
+                        if len(output_lines) > 1
+                        and not output_lines[-2].startswith("{")
+                        else "working..."
+                    )
+                )
                 live.update(RichText(f"  ⟳  {status}", style="dim"))
-                import time
-
                 time.sleep(0.25)
 
         reader.join()
         proc.wait()
 
-        # Show final output
         for line in output_lines:
             if not line:
                 continue
             if line.startswith("{") and "error" in line.lower():
-                console.print(f"[red]  {line}[/red]")
+                _print_error(line)
             elif any(k in line for k in ["✅", "DONE", "NEXT", "BLOCKED"]):
                 console.print(f"[dim green]  {line}[/dim green]")
             else:
@@ -155,6 +282,94 @@ def _load(log_path: Path):
     return process_entries(entries)
 
 
+def _get_templates_dir() -> Path:
+    import auditor
+
+    candidates = [
+        Path(auditor.__file__).parent.parent / "templates",
+        Path(auditor.__file__).parent / "templates",
+        Path(__file__).parent.parent / "templates",
+        Path.home() / "Desktop" / "maflow" / "templates",
+    ]
+    for p in candidates:
+        if p.exists() and any(p.iterdir()):
+            return p
+    raise FileNotFoundError(
+        "templates/ not found.\n"
+        "Install from the correct directory:\n"
+        "  cd ~/Desktop/maflow && uv pip install -e . --system"
+    )
+
+
+# ── Init ───────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def init(
+    project_name: str = typer.Argument(..., help="Name of the new project"),
+    path: Path = typer.Option(
+        Path("."), "--path", "-p", help="Where to create the project"
+    ),
+):
+    """Scaffold a new project with the maflow workflow structure."""
+    project_dir = path / project_name
+    if project_dir.exists():
+        console.print(f"[red]Directory already exists: {project_dir}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Creating project:[/bold] {project_name}")
+
+    workflow_dir = project_dir / "workflow"
+    continue_dir = project_dir / ".continue"
+    workflow_dir.mkdir(parents=True)
+    continue_dir.mkdir(parents=True)
+
+    try:
+        templates_dir = _get_templates_dir()
+        for f in templates_dir.iterdir():
+            if f.is_file():
+                shutil.copy(f, workflow_dir / f.name)
+        console.print(
+            "  [green]✓[/green] workflow/ — SPEC.md · CLAUDE.md · ARCHITECTURE.md · agent-log.md · decisions.md"
+        )
+    except FileNotFoundError:
+        console.print(
+            "  [yellow]⚠[/yellow] templates not found — create workflow/ files manually"
+        )
+
+    (continue_dir / "config.yaml").write_text(
+        "name: maflow\nversion: 1.0.0\nschema: v1\n", encoding="utf-8"
+    )
+    console.print("  [green]✓[/green] .continue/config.yaml")
+
+    import auditor as _pkg
+
+    orch = Path(_pkg.__file__).parent.parent / "orchestrator.py"
+    if orch.exists():
+        shutil.copy(orch, project_dir / "orchestrator.py")
+        console.print("  [green]✓[/green] orchestrator.py")
+
+    (project_dir / ".gitignore").write_text(
+        "__pycache__/\n*.pyc\n*.db\n.env\n*.egg-info/\ndist/\n.DS_Store\n.venv/\n",
+        encoding="utf-8",
+    )
+    console.print("  [green]✓[/green] .gitignore")
+
+    result = subprocess.run(
+        ["uv", "venv", str(project_dir / ".venv")], capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        console.print("  [green]✓[/green] .venv/")
+    else:
+        console.print("  [yellow]⚠[/yellow] .venv not created — run 'uv venv' manually")
+
+    console.print(f"\n[bold green]Project ready:[/bold green] {project_dir}")
+    console.print("\n[dim]Next steps:[/dim]")
+    console.print(f"  cd {project_name}")
+    console.print("  Fill workflow/SPEC.md sections 1-3")
+    console.print("  maflow architect")
+
+
 # ── Agent commands ─────────────────────────────────────────────────────────
 
 
@@ -169,8 +384,11 @@ def architect(
 @app.command()
 def worker(
     log: Path = typer.Option(DEFAULT_LOG, "--log", "-l"),
+    skip_docker: bool = typer.Option(False, "--skip-docker", help="Skip Docker check"),
 ):
     """Phase 2 — Run the Worker agent (Gemini Flash)."""
+    if not skip_docker:
+        _check_docker(Path("."))
     _run_agent("worker", MODEL_GEMINI, log)
 
 
@@ -188,16 +406,22 @@ def evaluator(
 @app.command()
 def refactor(
     log: Path = typer.Option(DEFAULT_LOG, "--log", "-l"),
+    skip_docker: bool = typer.Option(False, "--skip-docker", help="Skip Docker check"),
 ):
     """Phase 4 — Run the Refactor agent (Claude Sonnet)."""
+    if not skip_docker:
+        _check_docker(Path("."))
     _run_agent("refactor", MODEL_CLAUDE, log)
 
 
 @app.command()
 def testing(
     log: Path = typer.Option(DEFAULT_LOG, "--log", "-l"),
+    skip_docker: bool = typer.Option(False, "--skip-docker", help="Skip Docker check"),
 ):
     """Phase 5 — Run the Testing agent (Gemini Flash)."""
+    if not skip_docker:
+        _check_docker(Path("."))
     _run_agent("testing", MODEL_GEMINI, log)
 
 
@@ -259,21 +483,16 @@ def worst(
     print_worst(sessions_list, limit=limit)
 
 
-if __name__ == "__main__":
-    app()
-
-
 @app.command()
 def fix_log(
     log: Path = typer.Option(DEFAULT_LOG, "--log", "-l"),
 ):
-    """Fix encoding issues in agent-log.md — replaces corrupted characters."""
+    """Fix encoding issues in agent-log.md."""
     if not log.exists():
         console.print(f"[red]Not found: {log}[/red]")
         raise typer.Exit(1)
 
     content = log.read_text(encoding="utf-8", errors="replace")
-
     replacements = {
         "\ufffd": "·",
         "M-BM-7": "·",
@@ -289,111 +508,12 @@ def fix_log(
         "?? NEXT:": "➡️ NEXT:",
         "? NEXT:": "➡️ NEXT:",
     }
-
     fixed = content
     for bad, good in replacements.items():
         fixed = fixed.replace(bad, good)
-
     log.write_text(fixed, encoding="utf-8")
     console.print(f"[green]Fixed encoding in {log}[/green]")
 
 
-# ── Init command ───────────────────────────────────────────────────────────
-
-
-def _get_templates_dir() -> Path:
-    """Find templates directory — checks multiple locations."""
-    import auditor
-
-    candidates = [
-        Path(auditor.__file__).parent.parent / "templates",
-        Path(auditor.__file__).parent / "templates",
-        Path(__file__).parent.parent / "templates",
-        Path.home() / "Desktop" / "maflow" / "templates",
-    ]
-    for p in candidates:
-        if p.exists() and any(p.iterdir()):
-            return p
-    raise FileNotFoundError(
-        "templates/ not found.\n"
-        "Make sure maflow is installed from the correct directory:\n"
-        "  cd ~/Desktop/maflow && uv pip install -e . --system"
-    )
-
-
-@app.command()
-def init(
-    project_name: str = typer.Argument(..., help="Name of the new project"),
-    path: Path = typer.Option(
-        Path("."), "--path", "-p", help="Where to create the project"
-    ),
-):
-    """Scaffold a new project with the maflow workflow structure."""
-    project_dir = path / project_name
-
-    if project_dir.exists():
-        console.print(f"[red]Directory already exists: {project_dir}[/red]")
-        raise typer.Exit(1)
-
-    console.print(f"\n[bold]Creating project:[/bold] {project_name}")
-
-    # Create structure
-    workflow_dir = project_dir / "workflow"
-    continue_dir = project_dir / ".continue"
-    workflow_dir.mkdir(parents=True)
-    continue_dir.mkdir(parents=True)
-
-    # Copy templates → workflow/
-    try:
-        templates_dir = _get_templates_dir()
-        for f in templates_dir.iterdir():
-            if f.is_file():
-                shutil.copy(f, workflow_dir / f.name)
-        console.print(
-            "  [green]✓[/green] workflow/ — SPEC.md · CLAUDE.md · ARCHITECTURE.md · agent-log.md · decisions.md"
-        )
-    except FileNotFoundError:
-        console.print(
-            "  [yellow]⚠[/yellow] templates not found — create workflow/ files manually"
-        )
-
-    # Create .continue/config.yaml
-    continue_config = continue_dir / "config.yaml"
-    continue_config.write_text(
-        "name: maflow\nversion: 1.0.0\nschema: v1\n", encoding="utf-8"
-    )
-    console.print("  [green]✓[/green] .continue/config.yaml")
-
-    # Copy orchestrator.py
-    import auditor as _auditor_pkg
-
-    pkg_dir = Path(_auditor_pkg.__file__).parent.parent
-    orch = pkg_dir / "orchestrator.py"
-    if orch.exists():
-        shutil.copy(orch, project_dir / "orchestrator.py")
-        console.print("  [green]✓[/green] orchestrator.py")
-
-    # Create .gitignore
-    gitignore = project_dir / ".gitignore"
-    gitignore.write_text(
-        "__pycache__/\n*.pyc\n*.db\n.env\n*.egg-info/\ndist/\n.DS_Store\n.venv/\n",
-        encoding="utf-8",
-    )
-    console.print("  [green]✓[/green] .gitignore")
-
-    # Create .venv
-    console.print("  [dim]Creating virtual environment...[/dim]")
-    result = subprocess.run(
-        ["uv", "venv", str(project_dir / ".venv")], capture_output=True, text=True
-    )
-    if result.returncode == 0:
-        console.print("  [green]✓[/green] .venv/")
-    else:
-        console.print("  [yellow]⚠[/yellow] .venv not created — run 'uv venv' manually")
-
-    # Done
-    console.print(f"\n[bold green]Project ready:[/bold green] {project_dir}")
-    console.print("\n[dim]Next steps:[/dim]")
-    console.print(f"  cd {project_name}")
-    console.print("  Fill workflow/SPEC.md sections 1-3")
-    console.print("  maflow architect --log workflow/agent-log.md")
+if __name__ == "__main__":
+    app()

@@ -5,6 +5,16 @@
 
 ---
 
+## Dependency rule (all agents)
+
+If you add a new import that requires an external package:
+1. Add it to `pyproject.toml` under `[project.dependencies]` with exact pinned version
+2. Add a `Decision needed:` checkpoint if the package was not in SPEC.md section 6
+
+Never import a package without adding it to pyproject.toml first.
+
+---
+
 ## Response style (all agents)
 
 - No greetings, no sign-offs, no "sure!", no preamble
@@ -61,6 +71,8 @@ Wait for answer. Record in decisions.md immediately.
 2. If ambiguous → ask max 3 questions at once.
 3. Choose architecture per complexity field.
 4. Fill SPEC.md section 4. Write ARCHITECTURE.md — layers, contracts, folder structure, naming.
+5. Fill SPEC.md section 6 — list all dependencies with exact pinned versions, Docker services, and env vars.
+6. Write pyproject.toml with exact pinned versions in [project.dependencies] and [project.optional-dependencies.dev].
 5. Fill decisions.md + SPEC.md section 5.
 6. Run close protocol automatically.
 

@@ -59,7 +59,41 @@
 
 ---
 
-## 6. Current status
+## 6. Dependencies
+> 🤖 Architect fills this.
+> Rule: use exact pinned versions. Write pyproject.toml directly — do not just list packages here.
+
+### Install command
+```bash
+uv add [package==version] [package==version]
+```
+
+### pyproject.toml dependencies block
+```toml
+[project]
+dependencies = [
+    # Architect fills with exact versions
+]
+
+[project.optional-dependencies]
+dev = [
+    # Architect fills with exact dev versions
+]
+```
+
+### Docker services required
+```yaml
+# paste docker-compose.yml services block — or N/A
+```
+
+### Environment variables
+```
+# VAR_NAME=description — or N/A
+```
+
+---
+
+## 7. Current status
 > Agent rule: update this section before closing every session.
 
 - **Phase:** [e.g. Phase 1 — Architecture design]
