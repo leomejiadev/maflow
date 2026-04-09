@@ -16,5 +16,7 @@ dependencies = [
 maflow = "auditor.cli:app"
 
 [tool.setuptools.packages.find]
-where = ["."]
 include = ["auditor*"]
+
+[tool.uv]
+dev-dependencies = []

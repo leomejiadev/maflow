@@ -65,7 +65,7 @@ def parse_log(log_path: str | Path) -> list[Entry]:
     if not path.exists():
         raise FileNotFoundError(f"agent-log.md not found at: {path}")
 
-    content = path.read_text(encoding="utf-8")
+    content = path.read_text(encoding="utf-8", errors="replace")
     entries = []
 
     matched = list(ENTRY_PATTERN.finditer(content))
